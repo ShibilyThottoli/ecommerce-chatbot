@@ -2,7 +2,7 @@
 
 An AI-powered e-commerce assistant built with **Python and Streamlit**. It understands customer questions and routes them to the appropriate workflow: answering frequently asked questions or searching a product database using natural language.
 
-The chatbot can answer store-policy questions—such as cash on delivery and returns—and help users find products by brand, discount, price, and rating.
+The product database is built from a data pipeline that uses **Selenium-based web scraping** to collect product details from Flipkart, saves the extracted data to CSV, and imports it into SQLite.
 
 ## Demo
 
@@ -20,7 +20,9 @@ The chatbot can answer store-policy questions—such as cash on delivery and ret
 - **Semantic question routing:** Classifies incoming questions and directs them to the FAQ or product-query workflow.
 - **FAQ retrieval:** Uses FAQ data and ChromaDB to retrieve relevant information for policy questions.
 - **Natural-language product search:** Converts product questions into SQL queries with a Groq-hosted language model.
-- **SQLite product database:** Searches structured product information, including brand, price, discount, average rating, and product link.
+- **Web-scraped product data:** Uses Selenium with Chrome to gather Flipkart product-page links and extract product attributes.
+- **CSV data preparation:** Uses Pandas to clean and save product details, duplicate records, and unavailable-product links.
+- **SQLite database creation:** Imports the product CSV into a SQLite `product` table for chatbot queries.
 - **Readable responses:** Converts matching product records into a natural-language answer.
 - **Configurable settings:** Loads the Groq model and database path from environment variables.
 
@@ -66,8 +68,13 @@ The responses depend on the contents of the supplied FAQ data and local product 
                   ChromaDB       generates SQL
                         |             |
                         |             v
-                        |        SQLite database
-                        |             |
+                        |        SQLite database <--- CSV-to-SQLite import
+                        |             ^                         ^
+                        |             |                         |
+                        |        Product records           Product CSV
+                        |                                       ^
+                        |                                       |
+                        |                           Selenium web scraper
                         v             v
                    FAQ answer   Product records
                         \             /
@@ -75,43 +82,90 @@ The responses depend on the contents of the supplied FAQ data and local product 
                        Chat response
 ```
 
+## Product data pipeline: Selenium to SQLite
+
+The repository includes a Jupyter notebook and a Python script for preparing the product database.
+
+### 1. Scrape product data from Flipkart
+
+`data_pipeline/flipkart_data_extraction.ipynb` uses Selenium with Chrome to:
+
+1. Open Flipkart and search for `sports shoes for women`.
+2. Collect product listing links across pagination pages and remove duplicate links.
+3. Visit individual product pages and extract fields such as product URL, title, brand, price, discount, average rating, and total ratings.
+4. Save the results to `flipkart_product_data.csv` and also save duplicate and unavailable-product records to separate CSV files.
+
+The notebook currently limits the product-detail extraction stage to the **first 10 links** for demonstration. Remove or change the `.head(10)` limit if you intentionally want to process more products, while keeping site rules and request volume in mind. Website markup can change, so CSS selectors may need maintenance.
+
+### 2. Convert the CSV data into SQLite
+
+`data_pipeline/csv_to_sqlite.py` reads `flipkart_product_data.csv`, creates `db.sqlite` if it does not exist, creates the `product` table if needed, and appends the CSV rows to that table.
+
+Run this script from the directory containing `flipkart_product_data.csv`, or update `csv_path` and `db_path` in the script to use the correct paths:
+
+```bash
+python data_pipeline/csv_to_sqlite.py
+```
+
+The script expects these files in its current working directory by default:
+
+- `flipkart_product_data.csv` — produced by the scraping notebook.
+- `db.sqlite` — created or updated by the import script.
+
+**Note:** The script uses `if_exists='append'`, so running it repeatedly can insert duplicate rows into the database. Clear the table or add deduplication logic before re-importing the same CSV.
+
+### Data pipeline dependencies
+
+Install the libraries used by the notebook/script in the same Python environment:
+
+```bash
+python -m pip install selenium beautifulsoup4 lxml pandas
+```
+
+Selenium uses `webdriver.Chrome()`, so a compatible Google Chrome installation is required. Modern Selenium versions can manage the driver automatically in many setups.
+
+**Responsible use:** Use web scraping only in ways permitted by the website's terms and applicable law. Respect robots guidance, access restrictions, rate limits, and personal-data requirements. This notebook is an educational example; page selectors and availability can change over time.
+
 ## Tech stack
 
 | Technology | Role in the project |
 |---|---|
-| Python | Application logic |
+| Python | Application logic and data pipeline |
 | Streamlit | Interactive chat interface |
 | Groq API | Language-model calls for SQL generation and response generation |
 | Semantic Router | Routes user questions to the appropriate workflow |
 | Hugging Face / Sentence Transformers | Text embeddings used by the semantic-routing or retrieval components |
 | ChromaDB | Vector storage and retrieval for FAQs |
 | SQLite | Stores structured product data |
-| Pandas | Handles SQL query results |
+| Pandas | Handles scraped product data, CSV files, and SQL query results |
+| Selenium | Automates the browser to collect product links and product details |
+| Beautiful Soup / lxml | Included in the scraping notebook's imports for HTML parsing support |
 | `python-dotenv` | Loads local configuration from `.env` |
 
 ## Project structure
 
-The exact folder contents may vary. The application files described here follow this general structure:
-
 ```text
 ecommerce-chatbot/
 ├── app/
-│   ├── main.py                 # Streamlit interface and routing to chains
-│   ├── router.py               # Semantic routing logic
-│   ├── faq.py                  # FAQ ingestion and retrieval chain
-│   ├── sql.py                  # Groq SQL generation and SQLite execution
-│   ├── .env                    # Local environment variables (do not commit)
-│   ├── db.sqlite               # Local product database
+│   ├── main.py
+│   ├── router.py
+│   ├── faq.py
+│   ├── sql.py
+│   ├── .env                         # Local secrets; do not commit
+│   ├── db.sqlite                    # Local product database, if included locally
 │   └── resources/
-│       └── faq_data.csv        # FAQ source data
+│       └── faq_data.csv
+├── data_pipeline/
+│   ├── flipkart_data_extraction.ipynb # Selenium scraping notebook
+│   └── csv_to_sqlite.py               # CSV-to-SQLite import script
 ├── assets/
-│   ├── chatbot-demo-1.png      # Product-query screenshot
-│   └── chatbot-demo-2.png      # FAQ screenshot
-├── requirements.txt            # Python dependencies
+│   ├── chatbot-demo-1.png
+│   └── chatbot-demo-2.png
+├── requirements.txt
 └── README.md
 ```
 
-If your actual repository has a different layout, update this tree to match it before publishing.
+Generated files such as `flipkart_product_data.csv`, `flipkart_product_links.csv`, `unavailable_products.csv`, `duplicate_products.csv`, and `db.sqlite` are produced by running the data pipeline. Keep the generated files in the locations expected by your scripts and application.
 
 ## Getting started
 
@@ -124,10 +178,8 @@ If your actual repository has a different layout, update this tree to match it b
 
 ### 1. Clone the repository
 
-Replace the placeholder with your GitHub repository URL:
-
 ```bash
-git clone <YOUR_GITHUB_REPOSITORY_URL>
+git clone https://github.com/ShibilyThottoli/ecommerce-chatbot.git
 cd ecommerce-chatbot
 ```
 
@@ -145,6 +197,8 @@ python -m venv .venv
 ```bash
 python -m pip install -r requirements.txt
 ```
+
+If you plan to run the scraping notebook, also install its dependencies as described in [Data pipeline dependencies](#data-pipeline-dependencies).
 
 ### 4. Configure environment variables
 
@@ -176,7 +230,7 @@ python -m streamlit run main.py
 
 Open the local URL printed by Streamlit, usually `http://localhost:8501`.
 
-## Product database
+## Product database schema
 
 The SQL workflow is designed around a `product` table with these fields:
 
@@ -217,6 +271,9 @@ python -m pip install -r requirements.txt
 **The chatbot cannot find the database or FAQ CSV**  
 Confirm the files exist in the locations expected by `main.py` and `sql.py`. Check that `SQLITE_DB_PATH` matches the actual database filename.
 
+**The scraper cannot find page elements**  
+Flipkart may have changed its page layout or CSS selectors. Inspect the current page and update the selectors in the notebook. Use reasonable waits and avoid excessive requests.
+
 **The router chooses the wrong workflow**  
 Review the example utterances or route definitions in `router.py` and add representative examples of the kinds of questions users ask.
 
@@ -225,6 +282,8 @@ Review the example utterances or route definitions in `router.py` and add repres
 - Answers are limited by the information available in the local FAQ data and product database.
 - Product search depends on the quality of the generated SQL and the database schema.
 - Groq API access, model availability, rate limits, and context limits may affect requests.
+- Scraper selectors can break when the website changes, and the notebook's product-detail stage is limited to 10 links by default.
+- The CSV-to-SQLite script appends records on each run and does not deduplicate database rows automatically.
 - The project is a learning/demo application; generated SQL should be validated carefully before using this pattern with sensitive data or in production.
 
 ## Future improvements
@@ -233,6 +292,7 @@ Review the example utterances or route definitions in `router.py` and add repres
 - Improve validation and error handling for generated SQL.
 - Add product filters, pagination, and more structured product cards.
 - Add logging and evaluation for routing accuracy and answer quality.
+- Make the scraping pipeline more resilient with selector checks, retries, deduplication, and configurable limits.
 - Deploy the Streamlit application and document the deployment steps.
 
 ## License
